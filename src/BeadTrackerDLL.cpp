@@ -197,7 +197,7 @@ extern "C" DLL_API void destroyTracker(long long handle)
     TrackerState* state = reinterpret_cast<TrackerState*>(handle);
 
     // Flush remaining records to CSV before shutting down
-    state->force_eng.finalise();
+    state->force_eng.finalize();
 
     delete state;
 }

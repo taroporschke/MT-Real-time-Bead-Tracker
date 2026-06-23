@@ -26,7 +26,9 @@ extern "C" {
     DLL_API long long createTracker(
         float x1, float y1,
         float x2, float y2,
-        int width, int height
+        int width, int height,
+        const char* csv_path,       // Added
+        double temperature_K        // Added
     );
 
     // Called every frame
@@ -41,7 +43,8 @@ extern "C" {
         float* out_x1, float* out_y1,
         float* out_x2, float* out_y2,
         float* out_dist_px,
-        float* out_dist_um
+        float* out_dist_um,
+        double* out_force_pN        // Added
     );
 
     // Called once at experiment end
