@@ -15,4 +15,7 @@ createTracker, trackFrame, getLastFrameTimeMs, destroyTracker
 - LabView 2015 64x or later
 - OpenCV 4.12
 
-
+## Common Problems
+If while building the DLL you get an error about not being able to find the OpenCV libraries, 
+you can fix this by pasting the opencv_world(4120).dll and opencv_world(4120)d.dll files into 
+the same directory as the DLL you are building.

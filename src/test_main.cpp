@@ -38,7 +38,8 @@ int main() {
 
     // Test 1 - Create Tracker
     std::cout << "\n--- TEST 1: createTracker ---\n";
-    long long handle = createTracker(x1, y1, x2, y2, width, height);
+    // Add all tests
+    long long handle = createTracker(x1, y1, x2, y2, width, height, "sandbox_test_data.csv", 297.0);
 
     if (handle == 0) {
         std::cerr << "FAILED: createTracker returned 0\n";
@@ -50,6 +51,7 @@ int main() {
     std::cout << "\n--- TEST 2: trackFrame (single frame) ---\n";
 
     float out_x1, out_y1, out_x2, out_y2, out_dist_px, out_dist_um;
+    double force_pN = 0.0;
 
     trackFrame(
         handle,
@@ -58,13 +60,15 @@ int main() {
         &out_x1, &out_y1,
         &out_x2, &out_y2,
         &out_dist_px,
-        &out_dist_um
+        &out_dist_um,
+        &force_pN
     );
 
     std::cout << "Bead 1: (" << out_x1 << ", " << out_y1 << ")\n";
     std::cout << "Bead 2: (" << out_x2 << ", " << out_y2 << ")\n";
     std::cout << "Distance: " << out_dist_px << " px  |  "
               << out_dist_um << " um\n";
+    std::cout << "Force: " << force_pN << " pN\n";
 
     // Sanity checks
     bool bead1_sane = (out_x1 > 0 && out_x1 < width &&
@@ -84,11 +88,11 @@ int main() {
     std::cout << "Equivalent FPS: " << 1000.0 / last_ms << "\n";
 
     // Test 4 - 100 Frame Loop Timing
-    std::cout << "\n--- TEST 4: 100-frame loop timing ---\n";
+    std::cout << "\n--- TEST 4: 120-frame loop timing ---\n";
 
     auto t1 = std::chrono::high_resolution_clock::now();
 
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 120; i++) {
         trackFrame(
             handle,
             gray.data,
@@ -96,7 +100,8 @@ int main() {
             &out_x1, &out_y1,
             &out_x2, &out_y2,
             &out_dist_px,
-            &out_dist_um
+            &out_dist_um,
+            &force_pN
         );
     }
 
