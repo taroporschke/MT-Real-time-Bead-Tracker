@@ -176,6 +176,10 @@ extern "C" DLL_API void trackFrame(
         dist_um, timestamp_ms, force_pN
     );
 
+    if (std::isnan(force_pN) || std::isinf(force_pN)) {
+        force_pN = 0.0;
+    }
+
     // --- Stop timing
     auto t2 = std::chrono::high_resolution_clock::now();
     state->lastFrameMs = std::chrono::duration<double, std::milli>(t2 - t1).count();

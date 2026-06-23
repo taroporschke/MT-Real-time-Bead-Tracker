@@ -108,9 +108,9 @@ class ForceCalculator {
             // Calculate local moving averages
             double m_x1 = 0, m_y1 = 0, m_x2 = 0, m_y2 = 0, m_L = 0;
             for (const auto& w : window_) {
-                m_x1 = w.x1; m_y1 = w.y1;
-                m_x2 = w.x2; m_y2 = w.y2;
-                m_L = w.dist;
+                m_x1 += w.x1; m_y1 += w.y1;
+                m_x2 += w.x2; m_y2 += w.y2;
+                m_L += w.dist;
             }
             m_x1 /= n; m_y1 /= n; m_x2 /= n; m_y2 /= n; m_L /= n;
 
@@ -148,7 +148,7 @@ class ForceCalculator {
             double variance = var_sum / (n - 1);
 
             // Calculate final force
-            if (variance < 1e-9) {
+            if (variance > 1e-9) {
                 double force = (kT_ * m_L) / variance;
                 rec.force_pN = force;
                 out_force_pN = force;
