@@ -30,7 +30,7 @@
 // Meter to micrometer = 1e6
 // The constant's name is long, so it is abbreviated somewhat
 // K_Boltzmann pN * um/K
-constexpr double kB_pN_um_perK = 1.380649e-23 * 1e12 * 1e6; // = 1.380649e-5 pN * um/K
+constexpr double kB_J_perK = 1.380649e-23;
 
 // ----- Tunable Constants
 constexpr int VARIANCE_WINDOW = 600;
@@ -46,7 +46,10 @@ constexpr double DEFAULT_TEMPERATURE_K = 297.0;
 constexpr int CSV_FLUSH_INTERVAL = 500;
 
 struct FrameData {
-    double x1, y1, x2, y2, dist;
+    uint64_t frame;
+    double timestamp_ms;
+    float x1_px, y1_px, x2_px, y2_px;
+    double dist_um;
 };
 
 struct ForceRecord {
@@ -69,98 +72,94 @@ class ForceCalculator {
     void init(const std::string& csv_path, double temperature_K = DEFAULT_TEMPERATURE_K) {
         csv_path_ = csv_path;
         temperature_K_ = temperature_K;
-        kT_ = kB_pN_um_perK * temperature_K_;
+        kT_ = kB_J_perK * temperature_K_;
         reset();
     }
 
     void update(float x1_px, float y1_px, float x2_px, float y2_px, double dist_um,
-                double timestamp_ms, double& out_force_pN)
+        double timestamp_ms, double& out_force_pN, double& out_live_L_um)
     {
         out_force_pN = std::numeric_limits<double>::quiet_NaN();
+        out_live_L_um = std::numeric_limits<double>::quiet_NaN();
         frame_++;
 
-        ForceRecord rec;
-        rec.frame = frame_;
-        rec.timestamp_ms = timestamp_ms;
-        rec.x1_px = x1_px; rec.y1_px = y1_px;
-        rec.x2_px = x2_px; rec.y2_px = y2_px;
-        rec.dist_um = dist_um;
-
-        // Convert pixels to um
         FrameData fd{};
-        fd.x1 = x1_px * MICRONS_PER_PIXEL_local_;
-        fd.y1 = y1_px * MICRONS_PER_PIXEL_local_;
-        fd.x2 = x2_px * MICRONS_PER_PIXEL_local_;
-        fd.y2 = y2_px * MICRONS_PER_PIXEL_local_;
-        fd.dist = dist_um;
+        fd.frame = frame_;
+        fd.timestamp_ms = timestamp_ms;
+        fd.x1_px = x1_px; fd.y1_px = y1_px;
+        fd.x2_px = x2_px; fd.y2_px = y2_px;
+        fd.dist_um = dist_um;
 
         // Update rolling window
         window_.push_back(fd);
-        if (window_.size() > VARIANCE_WINDOW) {
+        const int TARGET_FRAMES = VARIANCE_WINDOW + 1;
+        if (window_.size() > TARGET_FRAMES) {
             window_.pop_front();
         }
 
         int n = static_cast<int>(window_.size());
 
-        // Only calculate force if buffer full enough
-        if (n >= MIN_VARIANCE_SAMPLES) {
+        if (n == TARGET_FRAMES) {
 
-            // Calculate local moving averages
-            double m_x1 = 0, m_y1 = 0, m_x2 = 0, m_y2 = 0, m_L = 0;
+            int center_idx = VARIANCE_WINDOW / 2;
+            const auto& center_frame = window_[center_idx];
+
+            ForceRecord rec;
+            rec.frame = center_frame.frame;
+            rec.timestamp_ms = center_frame.timestamp_ms;
+            rec.x1_px = center_frame.x1_px; rec.y1_px = center_frame.y1_px;
+            rec.x2_px = center_frame.x2_px; rec.y2_px = center_frame.y2_px;
+
+
+            // Calculate moving averages
+            double sum_rel_x_px = 0.0;
+            double sum_dist_um = 0.0;
+
             for (const auto& w : window_) {
-                m_x1 += w.x1; m_y1 += w.y1;
-                m_x2 += w.x2; m_y2 += w.y2;
-                m_L += w.dist;
+                sum_rel_x_px += (w.x2_px - w.x1_px);
+                sum_dist_um += w.dist_um;
             }
-            m_x1 /= n; m_y1 /= n; m_x2 /= n; m_y2 /= n; m_L /= n;
 
-            // Local axis, midpoint
-            double dx = m_x2 - m_x1;
-            double dy = m_y2 - m_y1;
-            double len = std::hypot(dx, dy);
-            if (len < 1e-9) len = 1.0;
-
-            // Perpendicular axis
-            double axis_perp_x = -dy/len;
-            double axis_perp_y = dx/len;
-
-            double mid_x = (m_x1 + m_x2) * 0.5;
-            double mid_y = (m_y1 + m_y2) * 0.5;
+            double avg_rel_x_px = sum_rel_x_px / n;
+            double avg_dist_um = sum_dist_um / n;
 
             // Calculate variance
-            double var_sum = 0.0;
-            double latest_delta_x = 0.0;
+            double var_sum_m2 = 0.0;
+            double mpp_m = dpp_local_ * 1e-6;
 
             for (const auto& w : window_) {
-                double curr_mid_x = (w.x1 + w.x2) * 0.5;
-                double curr_mid_y = (w.y1 + w.y2) * 0.5;
-
-                // Displacement from moving mean
-                double dmx = curr_mid_x - mid_x;
-                double dmy = curr_mid_y - mid_y;
-
-                // Project onto transverse axis
-                double proj = dmx * axis_perp_x + dmy * axis_perp_y;
-                var_sum += proj * proj;
-                latest_delta_x = proj;
+                double current_rel_x = w.x2_px - w.x1_px;
+                double dx_px = current_rel_x - avg_rel_x_px;
+                double dx_m = dx_px * mpp_m;
+                var_sum_m2 += (dx_m * dx_m);
             }
 
-            double variance = var_sum / (n - 1);
+            double variance_m2 = var_sum_m2 / n;
 
-            // Calculate final force
-            if (variance > 1e-9) {
-                double force = (kT_ * m_L) / variance;
-                rec.force_pN = force;
-                out_force_pN = force;
+            // Calculate force
+            double dist_m = avg_dist_um * 1e-6;
+            double force_pN = std::numeric_limits<double>::quiet_NaN();
+
+            if (variance_m2 > 1e-24) {
+                // F = 1e12 * (KBT * dist) / variance
+                force_pN = 1e12 * (kT_ * dist_m) / variance_m2;
             }
 
-            rec.delta_x_um = latest_delta_x;
-            rec.live_L_um = m_L;
-            rec.var_x_um2 = variance;
+            out_force_pN = force_pN;
+            out_live_L_um = avg_dist_um;
 
+            // Record for CSV
+            rec.dist_um = center_frame.dist_um;
+            rec.live_L_um = avg_dist_um;
+            rec.var_x_um2 = variance_m2 * 1e12;
+            rec.force_pN = force_pN;
+
+            // Frame's latest delta
+            double center_rel_x = center_frame.x2_px - center_frame.x1_px;
+            rec.delta_x_um = (center_rel_x - avg_rel_x_px) * dpp_local_;
+
+            appendRecord(rec);
         }
-
-        appendRecord(rec);
 
         if constexpr (CSV_FLUSH_INTERVAL > 0) {
             if (frame_ % CSV_FLUSH_INTERVAL == 0) {
@@ -170,7 +169,7 @@ class ForceCalculator {
     }
 
     void finalize() { flushCSV(true); }
-    void setMicronsPerPixel(double mpp) { MICRONS_PER_PIXEL_local_ = mpp; }
+    void setMicronsPerPixel(double mpp) { dpp_local_ = mpp; }
 
     void reset() {
         frame_ = 0;
@@ -209,8 +208,8 @@ private:
     }
 
     double temperature_K_ = DEFAULT_TEMPERATURE_K;
-    double kT_ = kB_pN_um_perK * DEFAULT_TEMPERATURE_K;
-    double MICRONS_PER_PIXEL_local_ = 0.0623;
+    double kT_ = kB_J_perK * DEFAULT_TEMPERATURE_K;
+    double dpp_local_ = 0.0609;
     uint64_t frame_ = 0;
     std::deque<FrameData> window_;
     std::string csv_path_;

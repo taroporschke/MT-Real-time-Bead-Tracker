@@ -52,6 +52,7 @@ int main() {
 
     float out_x1, out_y1, out_x2, out_y2, out_dist_px, out_dist_um;
     double force_pN = 0.0;
+    double live_L_um = 0.0;
 
     trackFrame(
         handle,
@@ -61,7 +62,8 @@ int main() {
         &out_x2, &out_y2,
         &out_dist_px,
         &out_dist_um,
-        &force_pN
+        &force_pN,
+        &live_L_um
     );
 
     std::cout << "Bead 1: (" << out_x1 << ", " << out_y1 << ")\n";
@@ -101,7 +103,8 @@ int main() {
             &out_x2, &out_y2,
             &out_dist_px,
             &out_dist_um,
-            &force_pN
+            &force_pN,
+            &live_L_um
         );
     }
 

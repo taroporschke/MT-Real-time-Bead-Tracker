@@ -15,6 +15,7 @@ struct TrackerState {
     int width = 0;
     int height = 0;
     double lastFrameMs = 0.0;
+    ForceCalculator forceCalc;
 
     // --- New Engine Additions ---
     ForceCalculator force_eng;
@@ -85,7 +86,9 @@ extern "C" DLL_API void trackFrame(
     float* out_y2,
     float* out_dist_px,
     float* out_dist_um,
-    double* out_force_pN)
+    double* out_force_pN,
+    double* out_live_L_um       // Added
+    )
 {
     if (handle == 0 || pixels == nullptr) return;
 
@@ -170,10 +173,11 @@ extern "C" DLL_API void trackFrame(
 
     // --- Feed physics engine & get Force
     double force_pN = 0.0;
+    double live_L_output = 0.0;
     state->force_eng.update(
         state->bead1.center.x, state->bead1.center.y,
         state->bead2.center.x, state->bead2.center.y,
-        dist_um, timestamp_ms, force_pN
+        dist_um, timestamp_ms, force_pN, live_L_output
     );
 
     if (std::isnan(force_pN) || std::isinf(force_pN)) {
@@ -192,6 +196,7 @@ extern "C" DLL_API void trackFrame(
     if (out_dist_px) *out_dist_px = (float)dist_px;
     if (out_dist_um) *out_dist_um = (float)dist_um;
     if (out_force_pN) *out_force_pN = force_pN;
+    if (out_live_L_um) *out_live_L_um = live_L_output;      // Added
 }
 
 // ----- destroyTracker
@@ -212,4 +217,12 @@ extern "C" DLL_API double getLastFrameTimeMs(long long handle)
     if (handle == 0) return -1.0;
     TrackerState* state = reinterpret_cast<TrackerState*>(handle);
     return state->lastFrameMs;
+}
+
+// ----- resetForceCalculator
+extern "C" DLL_API void resetForceCalculator(long long handle)
+{
+    if (handle == 0) return;
+    TrackerState* state = reinterpret_cast<TrackerState*>(handle);
+    state->forceCalc.reset();
 }

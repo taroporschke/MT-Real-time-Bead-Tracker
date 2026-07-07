@@ -44,7 +44,8 @@ extern "C" {
         float* out_x2, float* out_y2,
         float* out_dist_px,
         float* out_dist_um,
-        double* out_force_pN        // Added
+        double* out_force_pN,       // Added
+        double* out_live_L_um       // Added
     );
 
     // Called once at experiment end
@@ -52,6 +53,9 @@ extern "C" {
 
     // Returns processing time of most recent trackFrame call in milliseconds
     DLL_API double getLastFrameTimeMs(long long handle);
+
+    // Resets force calculator buffer for checkpointing
+    DLL_API void resetForceCalculator(long long handle);
 
 }
 #endif //BEADTRACKERDLL_H
