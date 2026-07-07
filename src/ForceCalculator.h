@@ -20,6 +20,7 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <limits>
 
 #include "BeadTrackerCore.h"
 
@@ -30,7 +31,8 @@
 // Meter to micrometer = 1e6
 // The constant's name is long, so it is abbreviated somewhat
 // K_Boltzmann pN * um/K
-constexpr double kB_J_perK = 1.380649e-23;
+// Matched to DynForce.cpp
+constexpr double kB_J_perK = 1.3806503e-23;
 
 // ----- Tunable Constants
 constexpr int VARIANCE_WINDOW = 600;
@@ -59,9 +61,9 @@ struct ForceRecord {
     float           y1_px           = 0.f;
     float           x2_px           = 0.f;
     float           y2_px           = 0.f;
-    double          dist_um         = 0.0;
+    double          dist_um         = 0.0;  // instantaneous distance
     double          delta_x_um      = 0.0;
-    double          live_L_um       = 0.0;
+    double          live_L_um       = 0.0;  // window avg distance
     double          var_x_um2       = 0.0;
     double          force_pN        = std::numeric_limits<double>::quiet_NaN();
 };
@@ -112,15 +114,16 @@ class ForceCalculator {
 
 
             // Calculate moving averages
-            double sum_rel_x_px = 0.0;
+            // Not averaged to match DynForce
+            double sum_x2_px = 0.0;
             double sum_dist_um = 0.0;
 
             for (const auto& w : window_) {
-                sum_rel_x_px += (w.x2_px - w.x1_px);
+                sum_x2_px += w.x2_px;
                 sum_dist_um += w.dist_um;
             }
 
-            double avg_rel_x_px = sum_rel_x_px / n;
+            double avg_x2_px = sum_x2_px / n;
             double avg_dist_um = sum_dist_um / n;
 
             // Calculate variance
@@ -128,8 +131,7 @@ class ForceCalculator {
             double mpp_m = dpp_local_ * 1e-6;
 
             for (const auto& w : window_) {
-                double current_rel_x = w.x2_px - w.x1_px;
-                double dx_px = current_rel_x - avg_rel_x_px;
+                double dx_px = w.x2_px - avg_x2_px;
                 double dx_m = dx_px * mpp_m;
                 var_sum_m2 += (dx_m * dx_m);
             }
@@ -137,7 +139,7 @@ class ForceCalculator {
             double variance_m2 = var_sum_m2 / n;
 
             // Calculate force
-            double dist_m = avg_dist_um * 1e-6;
+            double dist_m = center_frame.dist_um * 1e-6;
             double force_pN = std::numeric_limits<double>::quiet_NaN();
 
             if (variance_m2 > 1e-24) {
@@ -155,8 +157,7 @@ class ForceCalculator {
             rec.force_pN = force_pN;
 
             // Frame's latest delta
-            double center_rel_x = center_frame.x2_px - center_frame.x1_px;
-            rec.delta_x_um = (center_rel_x - avg_rel_x_px) * dpp_local_;
+            rec.delta_x_um = (center_frame.x2_px - avg_x2_px) * dpp_local_;
 
             appendRecord(rec);
         }
@@ -167,6 +168,7 @@ class ForceCalculator {
             }
         }
     }
+
 
     void finalize() { flushCSV(true); }
     void setMicronsPerPixel(double mpp) { dpp_local_ = mpp; }
@@ -209,7 +211,7 @@ private:
 
     double temperature_K_ = DEFAULT_TEMPERATURE_K;
     double kT_ = kB_J_perK * DEFAULT_TEMPERATURE_K;
-    double dpp_local_ = 0.0609;
+    double dpp_local_ = 0.0623;
     uint64_t frame_ = 0;
     std::deque<FrameData> window_;
     std::string csv_path_;
