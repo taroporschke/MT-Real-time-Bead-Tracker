@@ -8,7 +8,7 @@
 
 #include <opencv2/opencv.hpp>
 
-constexpr double MICRONS_PER_PIXEL = 0.0623;
+constexpr double MICRONS_PER_PIXEL = 0.0609;
 constexpr double BEAD_OFFSET_UM = 2.8;
 constexpr int BASE_ROI_TOP = 40;
 constexpr int BASE_ROI_BOTTOM = 40;

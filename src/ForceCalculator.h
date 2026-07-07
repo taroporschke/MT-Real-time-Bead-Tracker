@@ -42,8 +42,8 @@ constexpr double DEFAULT_TEMPERATURE_K = 297.0;
 // ----- CSV Output
 // Written on destroyTracker call
 // One row per frame
-// Columns: frame, timestamp_ms, x1_px, y1_px, x2_px, y2_px,
-// dist_um, delta_x_um, mean_L_um, var_x_um2, force_pN, n_variance_samples
+// Columns: frame, x1_px, y1_px, x2_px, y2_px,
+// dist_um, delta_x_um, mean_L_um, var_x_um2, force_pN
 // Baseline frames will have NaN force
 constexpr int CSV_FLUSH_INTERVAL = 500;
 
@@ -94,6 +94,24 @@ class ForceCalculator {
 
         // Update rolling window
         window_.push_back(fd);
+
+        // First 300 frames NaN force
+        int center_idx = VARIANCE_WINDOW / 2;
+        if (frame_ <= center_idx) {
+            ForceRecord rec;
+            rec.frame = fd.frame;
+            rec.x1_px = fd.x1_px;
+            rec.y1_px = fd.y1_px;
+            rec.x2_px = fd.x2_px;
+            rec.y2_px = fd.y2_px;
+            rec.dist_um = fd.dist_um;
+            rec.live_L_um = 0.0;
+            rec.var_x_um2 = 0.0;
+            rec.force_pN = 0.0;
+            appendRecord(rec);
+        }
+        // -------------------------
+
         const int TARGET_FRAMES = VARIANCE_WINDOW + 1;
         if (window_.size() > TARGET_FRAMES) {
             window_.pop_front();
@@ -103,7 +121,6 @@ class ForceCalculator {
 
         if (n == TARGET_FRAMES) {
 
-            int center_idx = VARIANCE_WINDOW / 2;
             const auto& center_frame = window_[center_idx];
 
             ForceRecord rec;
@@ -169,12 +186,32 @@ class ForceCalculator {
         }
     }
 
+    void finalize() {
+        // Catch remaining frames
+        for (const auto& fd : window_) {
+            if (fd.frame > last_logged_frame_) {
+                ForceRecord rec;
+                rec.frame = fd.frame;
+                rec.x1_px = fd.x1_px;
+                rec.y1_px = fd.y1_px;
+                rec.x2_px = fd.x2_px;
+                rec.y2_px = fd.y2_px;
+                rec.dist_um = fd.dist_um;
+                rec.live_L_um = 0.0;
+                rec.var_x_um2 = 0.0;
+                rec.force_pN = 0.0;
+                appendRecord(rec);
+            }
+        }
+        // ----------------------
+        flushCSV(true);
+    }
 
-    void finalize() { flushCSV(true); }
     void setMicronsPerPixel(double mpp) { dpp_local_ = mpp; }
 
     void reset() {
         frame_ = 0;
+        last_logged_frame_ = 0; // Reset tracker memory
         window_.clear();
         pending_records_.clear();
         file_header_written_ = false;
@@ -182,7 +219,13 @@ class ForceCalculator {
     }
 
 private:
-    void appendRecord(const ForceRecord& r) { pending_records_.push_back(r);}
+    void appendRecord(const ForceRecord& r) {
+        pending_records_.push_back(r);
+        // Keep track of highest frame queued
+        if (r.frame > last_logged_frame_) {
+            last_logged_frame_ = r.frame;
+        }
+    }
 
     void flushCSV(bool close = false) {
         if (csv_path_.empty() || pending_records_.empty()) {
@@ -193,14 +236,17 @@ private:
         if (!ofs_.is_open()) return;
 
         if (!file_header_written_) {
-            ofs_ << "frame,timestamp_ms,dist_um,live_L_um,var_x_um2,forcepN\n";
+            ofs_ << "frame,x1_px,y1_px,x2_px,y2_px,dist_um,live_L_um,var_x_um2,forcepN\n";
             file_header_written_ = true;
         }
 
         ofs_ << std::fixed << std::setprecision(6);
         for (const auto& r : pending_records_) {
-            ofs_ << r.frame << ',' << r.timestamp_ms << ',' << r.dist_um << ','
-                << r.live_L_um << ',' << r.var_x_um2 << ',';
+            ofs_    << r.frame << ','
+                    << r.x1_px << ',' << r.y1_px << ','
+                    << r.x2_px << ',' << r.y2_px << ','
+                    << r.dist_um << ','
+                    << r.live_L_um << ',' << r.var_x_um2 << ',';
             if (std::isnan(r.force_pN)) ofs_ << '\n';
             else ofs_ << r.force_pN << '\n';
         }
@@ -211,16 +257,14 @@ private:
 
     double temperature_K_ = DEFAULT_TEMPERATURE_K;
     double kT_ = kB_J_perK * DEFAULT_TEMPERATURE_K;
-    double dpp_local_ = 0.0623;
+    double dpp_local_ = 0.0609;
     uint64_t frame_ = 0;
+    uint64_t last_logged_frame_ = 0;
     std::deque<FrameData> window_;
     std::string csv_path_;
     std::ofstream ofs_;
     bool file_header_written_ = false;
     std::vector<ForceRecord> pending_records_;
 };
-
-
-
 
 #endif //FORCECALCULATOR_H
