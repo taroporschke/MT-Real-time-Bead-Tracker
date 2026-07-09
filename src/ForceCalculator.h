@@ -61,10 +61,13 @@ struct ForceRecord {
     float           y1_px           = 0.f;
     float           x2_px           = 0.f;
     float           y2_px           = 0.f;
-    double          dist_um         = 0.0;  // instantaneous distance
-    double          delta_x_um      = 0.0;
-    double          live_L_um       = 0.0;  // window avg distance
-    double          var_x_um2       = 0.0;
+    double          dist_um         = 0.0;
+
+    // Calculated values
+    double          live_L_um       = std::numeric_limits<double>::quiet_NaN();
+    double          var_x_um2       = std::numeric_limits<double>::quiet_NaN();
+    double          fluct_x_um      = std::numeric_limits<double>::quiet_NaN();
+    double          fluct2_x_um2    = std::numeric_limits<double>::quiet_NaN();
     double          force_pN        = std::numeric_limits<double>::quiet_NaN();
 };
 
@@ -105,12 +108,39 @@ class ForceCalculator {
             rec.x2_px = fd.x2_px;
             rec.y2_px = fd.y2_px;
             rec.dist_um = fd.dist_um;
-            rec.live_L_um = 0.0;
-            rec.var_x_um2 = 0.0;
-            rec.force_pN = 0.0;
+
+            int current_n = window_.size();
+
+            if (current_n >= MIN_VARIANCE_SAMPLES) {
+                double sum_x2_px = 0.0, sum_dist_um = 0.0;
+                for (const auto& w : window_) {
+                    sum_x2_px += w.x2_px;
+                    sum_dist_um += w.dist_um;
+                }
+                double avg_x2_px = sum_x2_px / current_n;
+                double avg_dist_um = sum_dist_um / current_n;
+
+                double var_sum_m2 = 0.0;
+                double mpp_m = dpp_local_ * 1e-6;
+                for (const auto& w : window_) {
+                    double dx_m = (w.x2_px - avg_x2_px) * mpp_m;
+                    var_sum_m2 += (dx_m * dx_m);
+                }
+                double variance_m2 = var_sum_m2 / current_n;
+
+                // Calculate fluctuation
+                rec.fluct_x_um = (fd.x2_px - avg_x2_px) * dpp_local_;
+                rec.fluct2_x_um2 = rec.fluct_x_um * rec.fluct_x_um;
+
+                rec.live_L_um = avg_dist_um;
+                rec.var_x_um2 = variance_m2 * 1e12;
+                if (variance_m2 > 1e-24) {
+                    rec.force_pN = 1e12 * (kT_ * (avg_dist_um * 1e-6)) / variance_m2;
+                }
+            }
+
             appendRecord(rec);
         }
-        // -------------------------
 
         const int TARGET_FRAMES = VARIANCE_WINDOW + 1;
         if (window_.size() > TARGET_FRAMES) {
@@ -128,10 +158,11 @@ class ForceCalculator {
             rec.timestamp_ms = center_frame.timestamp_ms;
             rec.x1_px = center_frame.x1_px; rec.y1_px = center_frame.y1_px;
             rec.x2_px = center_frame.x2_px; rec.y2_px = center_frame.y2_px;
+            rec.dist_um = center_frame.dist_um;
 
 
             // Calculate moving averages
-            // Not averaged to match DynForce
+            // Not averaged in order to match DynForce
             double sum_x2_px = 0.0;
             double sum_dist_um = 0.0;
 
@@ -148,8 +179,7 @@ class ForceCalculator {
             double mpp_m = dpp_local_ * 1e-6;
 
             for (const auto& w : window_) {
-                double dx_px = w.x2_px - avg_x2_px;
-                double dx_m = dx_px * mpp_m;
+                double dx_m = (w.x2_px - avg_x2_px) * mpp_m;
                 var_sum_m2 += (dx_m * dx_m);
             }
 
@@ -157,24 +187,15 @@ class ForceCalculator {
 
             // Calculate force
             double dist_m = center_frame.dist_um * 1e-6;
-            double force_pN = std::numeric_limits<double>::quiet_NaN();
-
             if (variance_m2 > 1e-24) {
-                // F = 1e12 * (KBT * dist) / variance
-                force_pN = 1e12 * (kT_ * dist_m) / variance_m2;
+                rec.force_pN = 1e12 * (kT_ * dist_m) / variance_m2;
             }
 
-            out_force_pN = force_pN;
-            out_live_L_um = avg_dist_um;
-
-            // Record for CSV
-            rec.dist_um = center_frame.dist_um;
             rec.live_L_um = avg_dist_um;
             rec.var_x_um2 = variance_m2 * 1e12;
-            rec.force_pN = force_pN;
 
-            // Frame's latest delta
-            rec.delta_x_um = (center_frame.x2_px - avg_x2_px) * dpp_local_;
+            out_force_pN = rec.force_pN;
+            out_live_L_um = rec.live_L_um;
 
             appendRecord(rec);
         }
@@ -187,8 +208,10 @@ class ForceCalculator {
     }
 
     void finalize() {
-        // Catch remaining frames
-        for (const auto& fd : window_) {
+        // Tail flush
+        while (!window_.empty()) {
+            const auto& fd = window_.front();
+
             if (fd.frame > last_logged_frame_) {
                 ForceRecord rec;
                 rec.frame = fd.frame;
@@ -197,13 +220,44 @@ class ForceCalculator {
                 rec.x2_px = fd.x2_px;
                 rec.y2_px = fd.y2_px;
                 rec.dist_um = fd.dist_um;
-                rec.live_L_um = 0.0;
-                rec.var_x_um2 = 0.0;
-                rec.force_pN = 0.0;
+
+                int current_n = window_.size();
+
+                if (current_n >= MIN_VARIANCE_SAMPLES) {
+                    double sum_x2_px = 0.0, sum_dist_um = 0.0;
+                    for (const auto& w : window_) {
+                        sum_x2_px += w.x2_px;
+                        sum_dist_um += w.dist_um;
+                    }
+                    double avg_x2_px = sum_x2_px / current_n;
+                    double avg_dist_um = sum_dist_um / current_n;
+
+                    double var_sum_m2 = 0.0;
+                    double mpp_m = dpp_local_ * 1e-6;
+                    for (const auto& w : window_) {
+                        double dx_m = (w.x2_px - avg_x2_px) * mpp_m;
+                        var_sum_m2 += (dx_m * dx_m);
+                    }
+                    double variance_m2 = var_sum_m2 / current_n;
+
+                    // Calculate fluctuation
+                    rec.fluct_x_um = (fd.x2_px - avg_x2_px) * dpp_local_;
+                    rec.fluct2_x_um2 = rec.fluct_x_um * rec.fluct_x_um;
+
+                    rec.live_L_um = avg_dist_um;
+                    rec.var_x_um2 = variance_m2 * 1e12;
+                    if (variance_m2 > 1e-24) {
+                        rec.force_pN = 1e12 * (kT_ * (avg_dist_um * 1e-6)) / variance_m2;
+                    }
+                }
+                // If < 120 frames, struct defaults to NaN
+
                 appendRecord(rec);
             }
+            window_.pop_front();
         }
-        // ----------------------
+
+
         flushCSV(true);
     }
 
@@ -236,19 +290,24 @@ private:
         if (!ofs_.is_open()) return;
 
         if (!file_header_written_) {
-            ofs_ << "frame,x1_px,y1_px,x2_px,y2_px,dist_um,live_L_um,var_x_um2,forcepN\n";
+            ofs_ << "frame,x1_px,y1_px,x2_px,y2_px,dist_um,live_L_um,var_x_um2,fluct_x_um,fluct2_x_um2,force_pN\n";
             file_header_written_ = true;
         }
 
         ofs_ << std::fixed << std::setprecision(6);
         for (const auto& r : pending_records_) {
-            ofs_    << r.frame << ','
-                    << r.x1_px << ',' << r.y1_px << ','
-                    << r.x2_px << ',' << r.y2_px << ','
-                    << r.dist_um << ','
-                    << r.live_L_um << ',' << r.var_x_um2 << ',';
-            if (std::isnan(r.force_pN)) ofs_ << '\n';
-            else ofs_ << r.force_pN << '\n';
+            // Standard coordinates
+            ofs_ << r.frame << ','
+                 << r.x1_px << ',' << r.y1_px << ','
+                 << r.x2_px << ',' << r.y2_px << ','
+                 << r.dist_um << ',';
+
+            // 0 (interchangeable) if NaN, else write
+            if (std::isnan(r.live_L_um)) ofs_ << "0,"; else ofs_ << r.live_L_um << ',';
+            if (std::isnan(r.var_x_um2)) ofs_ << "0,"; else ofs_ << r.var_x_um2 << ',';
+            if (std::isnan(r.fluct_x_um)) ofs_ << "0,"; else ofs_ << r.fluct_x_um << ',';
+            if (std::isnan(r.fluct2_x_um2)) ofs_ << "0,"; else ofs_ << r.fluct2_x_um2 << ',';
+            if (std::isnan(r.force_pN)) ofs_ << "0\n"; else ofs_ << r.force_pN << '\n';
         }
 
         pending_records_.clear();
